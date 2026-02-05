@@ -38,6 +38,8 @@ The primary goal was to explore the intersection of classical game tree search a
 
 ### Search Enhancements
 - **Alpha-Beta Pruning**: Fail-soft implementation with principal variation tracking
+- **Iterative Deepening**: Time-controlled search with configurable time limits (0.5s - 5s)
+- **Late Move Reductions (LMR)**: Reduces search depth for likely bad moves
 - **Quiescence Search**: Resolves tactical sequences to avoid horizon effect
 - **Transposition Table**: Zobrist hashing with depth-preferred replacement
 - **Move Ordering**: MVV-LVA for captures, killer move heuristic for quiet moves
@@ -49,7 +51,13 @@ The primary goal was to explore the intersection of classical game tree search a
 - **Piece-Square Tables**: 12 tables (6 pieces × 2 phases) encouraging positional play
 - **Pawn Structure**: Doubled, isolated, passed, and outside passed pawn detection
 - **King Safety**: Pawn shield, open file penalties, attacker proximity scoring
-- **Positional**: Bishop pair, rook on open files, knight outposts, mobility, space control
+- **Tactical Evaluation**: Hanging pieces, forks, pins, and skewers detection
+- **Rook Features**: Open/semi-open files, 7th rank bonuses, rook connectivity
+- **Bishop Features**: Fianchetto, long diagonal control, bad bishop detection
+- **Piece Activity**: Mobility scoring for all pieces
+- **Development**: Early game piece development and castling bonuses
+- **Endgame**: King centralization, passed pawn advancement, mating patterns
+- **Positional**: Bishop pair, knight outposts, space control
 
 ### Machine Learning
 - **Data Generation**: Filters high-Elo (2200+) games ending in checkmate
@@ -81,7 +89,13 @@ chess-engine/
 │       ├── features_space.py     # Mobility and space control
 │       ├── features_control.py   # Center control, castling
 │       ├── features_special.py   # Bishop pair, rook files
-│       └── features_game_phase.py
+│       ├── features_game_phase.py
+│       ├── features_tactics.py   # Hanging pieces, forks, pins
+│       ├── features_rooks.py     # Rook placement and connectivity
+│       ├── features_bishops.py   # Fianchetto, diagonals
+│       ├── features_piece_activity.py  # Piece mobility
+│       ├── features_development.py     # Opening development
+│       └── features_endgame.py   # Endgame-specific scoring
 │
 ├── training/                     # ML tuning pipeline
 │   ├── __init__.py
@@ -137,7 +151,11 @@ pip install -r requirements.txt
 python play_bot.py
 ```
 
-Choose your color (w/b) and play using mouse clicks. The engine searches at depth 4 by default.
+Choose your color (w/b) and play using mouse clicks. The GUI features:
+- **Adjustable time controls**: Use +/- buttons to set engine thinking time (0.5s - 5s)
+- **Real-time evaluation panel**: Shows current score, search depth, and expected line
+- **Evaluation breakdown**: Visual bar graphs showing key factors (material, king safety, etc.)
+- **Opening book indicator**: Shows when the engine uses GM games for moves
 
 ### Train Custom Weights
 
@@ -263,9 +281,7 @@ for alpha in alphas:
 
 ## Future Improvements
 
-- [ ] **Iterative Deepening** with time management
 - [ ] **Aspiration Windows** for faster search
-- [ ] **Late Move Reductions (LMR)**
 - [ ] **Null Move Pruning**
 - [ ] **Neural Network Evaluation** (NNUE-style)
 - [ ] **UCI Protocol** for GUI compatibility
