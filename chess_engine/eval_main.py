@@ -133,64 +133,32 @@ def get_top_factors(breakdown: dict, n: int = 5) -> list:
 
 
 def evaluate_board(board: chess.Board) -> int:
+    """
+    Fast evaluation for search - prioritizes speed over accuracy.
+    Returns score from White's perspective.
+    """
     # Terminal states
     if board.is_checkmate():
         return -MATE_SCORE if board.turn == chess.WHITE else MATE_SCORE
-    if board.is_stalemate() or board.is_insufficient_material() or board.can_claim_threefold_repetition():
+    if board.is_stalemate() or board.is_insufficient_material():
         return 0
 
-    # Base material
+    # Core features only
     material = get_material_score(board)
-
-    # PSTs for MG/EG
     mg_pst, eg_pst = get_pst_score(board)
-
-    # Phase for MG-only feature gating
-    phase = calculate_game_phase(board)
-
-    # Phase-independent features
     bishop_pair = get_bishop_pair_score(board)
     rook_files = get_rook_placement_score(board)
-    pawn_struct = get_pawn_structure_score(board)
     
-    # NEW: Phase-independent features
-    tactical = get_tactical_score(board)
-    rook_features = get_rook_features_score(board)
-    bishop_features = get_bishop_features_score(board)
-    piece_activity = get_piece_activity_score(board)
-
-    # Middlegame-only strategic heuristics
-    mg_knight_outposts = get_knight_outpost_score(board)
-    mg_king_safety = get_king_safety_score(board)
-    mg_mobility = get_mobility_score(board)
-    mg_space = get_space_score(board)
-    mg_uncastled = get_uncastled_king_penalty(board, phase)
-    mg_center = get_center_control_score(board)
-    mg_development = get_development_score(board)
-
-    # Endgame features
-    endgame = get_endgame_score(board, phase)
-
-    # Middlegame total
-    mg_total = (
-        material + mg_pst + bishop_pair + rook_files + pawn_struct
-        + mg_knight_outposts + mg_king_safety + mg_mobility + mg_space
-        + mg_uncastled + mg_center + mg_development
-        + tactical + rook_features + bishop_features + piece_activity
-    )
+    # Phase for blending
+    phase = calculate_game_phase(board)
     
-    # Endgame total (simplified - less positional, more concrete)
-    # Scale down tactical score in endgames (kings often "attack" pawns but can't take them)
-    eg_tactical = int(tactical * 0.3)  # Reduce tactical weight in endgame
-    eg_total = (
-        material + eg_pst + bishop_pair + rook_files + pawn_struct
-        + eg_tactical + rook_features + bishop_features + piece_activity
-        + endgame
-    )
+    # Blend PST scores
+    pst_blended = phase * mg_pst + (1.0 - phase) * eg_pst
 
-    blended = phase * mg_total + (1.0 - phase) * eg_total
+    # Total
+    total = material + pst_blended + bishop_pair + rook_files
 
-    # Tempo bonus for side to move
-    blended += TEMPO_BONUS if board.turn == chess.WHITE else -TEMPO_BONUS
+    # Tempo
+    total += TEMPO_BONUS if board.turn == chess.WHITE else -TEMPO_BONUS
 
-    return int(round(blended))
+    return int(round(total))
