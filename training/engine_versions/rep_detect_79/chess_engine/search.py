@@ -1,5 +1,4 @@
 import chess
-import time
 from chess_engine.eval_main import evaluate_board
 from chess_engine.zobrist import compute_zobrist_hash
 
@@ -8,12 +7,6 @@ POS_INF = 10**9
 
 # Transposition table entry: { 'score': int, 'depth': int, 'flag': 'EXACT'|'LOWERBOUND'|'UPPERBOUND' }
 transposition_table: dict[int, dict] = {}
-
-# Time control globals
-_search_start_time = 0.0
-_search_time_limit = 0.0
-_search_aborted = False
-_node_count = 0
 
 # MVV-LVA piece base values (centipawns)
 _PV = {
@@ -36,16 +29,6 @@ mvv_lva_scores = {
 def evaluate_for_side_to_move(board: chess.Board) -> int:
     score = evaluate_board(board)
     return score if board.turn == chess.WHITE else -score
-
-
-def check_time() -> bool:
-    """Check if we've exceeded time limit. Returns True if we should abort."""
-    global _search_aborted
-    if _search_time_limit > 0:
-        if time.time() - _search_start_time >= _search_time_limit:
-            _search_aborted = True
-            return True
-    return False
 
 
 def _capture_score(board: chess.Board, move: chess.Move) -> int:
@@ -80,17 +63,6 @@ def order_moves(board: chess.Board, moves, killer_moves, ply: int):
 
 
 def quiescence_search(board: chess.Board, alpha: int, beta: int, ply: int = 0) -> int:
-    global _node_count
-    _node_count += 1
-    
-    # Check time every 256 nodes
-    if _node_count & 255 == 0:
-        if check_time():
-            return 0
-    
-    if _search_aborted:
-        return 0
-    
     # Stand pat
     stand_pat = evaluate_for_side_to_move(board)
     if stand_pat >= beta:
@@ -115,17 +87,6 @@ def quiescence_search(board: chess.Board, alpha: int, beta: int, ply: int = 0) -
 
 
 def negamax(board: chess.Board, depth: int, alpha: int, beta: int, ply: int, killer_moves) -> int:
-    global _node_count
-    _node_count += 1
-    
-    # Check time every 256 nodes
-    if _node_count & 255 == 0:
-        if check_time():
-            return 0  # Return immediately if time is up
-    
-    if _search_aborted:
-        return 0
-    
     # Handle terminal positions immediately to avoid iterating an empty move list
     if board.is_game_over():
         return evaluate_for_side_to_move(board)
@@ -274,47 +235,3 @@ def alpha_beta_search(board: chess.Board, depth: int) -> tuple[chess.Move | None
                 break
     
     return best_move, pv, best_score
-
-
-def iterative_deepening_search(board: chess.Board, time_limit_seconds: float) -> tuple[int, chess.Move | None, list[chess.Move], int]:
-    """
-    Iterative deepening search with time limit.
-    Returns (score, best_move, pv, depth_reached).
-    """
-    global _search_start_time, _search_time_limit, _search_aborted, _node_count
-    
-    _search_start_time = time.time()
-    _search_time_limit = time_limit_seconds
-    _search_aborted = False
-    _node_count = 0
-    
-    best_move = None
-    best_score = 0
-    best_pv = []
-    depth_reached = 0
-    
-    MAX_DEPTH = 20
-    
-    for depth in range(1, MAX_DEPTH + 1):
-        elapsed = time.time() - _search_start_time
-        # Don't start a new depth if we've used 50% of time
-        if elapsed >= time_limit_seconds * 0.5:
-            break
-        
-        move, pv, score = alpha_beta_search(board, depth)
-        
-        # Only use result if search wasn't aborted
-        if not _search_aborted and move:
-            best_move = move
-            best_score = score
-            best_pv = pv
-            depth_reached = depth
-        
-        if _search_aborted:
-            break
-    
-    # Reset time control
-    _search_time_limit = 0.0
-    _search_aborted = False
-    
-    return best_score, best_move, best_pv, depth_reached

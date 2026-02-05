@@ -57,10 +57,10 @@ class Engine:
         board_copy = self.board.copy(stack=False)
         
         if self.time_limit_ms > 0:
-            # Use iterative deepening with time limit
-            best_move, score, depth_reached = iterative_deepening_search(board_copy, self.time_limit_ms)
+            # Use iterative deepening with time limit (convert ms to seconds)
+            score, best_move, pv, depth_reached = iterative_deepening_search(board_copy, self.time_limit_ms / 1000.0)
             self.last_depth = depth_reached
-            self.last_pv = [best_move] if best_move else []
+            self.last_pv = pv if pv else ([best_move] if best_move else [])
         else:
             # Use fixed depth search
             best_move, pv, score = alpha_beta_search(board_copy, self.depth)

@@ -285,6 +285,278 @@ def _tempo(board: chess.Board) -> int:
     return 1 if board.turn == chess.WHITE else -1
 
 
+# =============================
+# NEW FEATURE HELPERS
+# =============================
+
+def _is_hanging(board: chess.Board, sq: int, color: bool) -> bool:
+    """Check if a piece is hanging (attacked but not defended)."""
+    enemy = not color
+    attackers = board.attackers(enemy, sq)
+    defenders = board.attackers(color, sq)
+    return len(attackers) > 0 and len(defenders) == 0
+
+
+def _count_hanging_pieces(board: chess.Board, color: bool) -> int:
+    """Count hanging pieces for a color."""
+    count = 0
+    for pt in (chess.PAWN, chess.KNIGHT, chess.BISHOP, chess.ROOK, chess.QUEEN):
+        for sq in board.pieces(pt, color):
+            if _is_hanging(board, sq, color):
+                count += 1
+    return count
+
+
+def _count_threats(board: chess.Board, color: bool) -> int:
+    """Count pieces attacked by lower-value pieces (threats)."""
+    enemy = not color
+    piece_values = {chess.PAWN: 1, chess.KNIGHT: 3, chess.BISHOP: 3, 
+                    chess.ROOK: 5, chess.QUEEN: 9, chess.KING: 0}
+    threat_count = 0
+    
+    for pt in (chess.PAWN, chess.KNIGHT, chess.BISHOP, chess.ROOK, chess.QUEEN):
+        for sq in board.pieces(pt, color):
+            for target in board.attacks(sq):
+                target_piece = board.piece_at(target)
+                if target_piece and target_piece.color == enemy:
+                    if piece_values.get(target_piece.piece_type, 0) > piece_values.get(pt, 0):
+                        threat_count += 1
+    return threat_count
+
+
+def _is_rook_on_7th(board: chess.Board, sq: int, color: bool) -> bool:
+    """Check if rook is on 7th rank."""
+    rank = _rank_index(sq)
+    return (color == chess.WHITE and rank == 6) or (color == chess.BLACK and rank == 1)
+
+
+def _count_rooks_on_7th(board: chess.Board, color: bool) -> int:
+    """Count rooks on 7th rank."""
+    return sum(1 for sq in board.pieces(chess.ROOK, color) if _is_rook_on_7th(board, sq, color))
+
+
+def _are_rooks_connected(board: chess.Board, color: bool) -> bool:
+    """Check if two rooks are connected (can see each other)."""
+    rooks = list(board.pieces(chess.ROOK, color))
+    if len(rooks) < 2:
+        return False
+    r1, r2 = rooks[0], rooks[1]
+    # Check if one rook attacks the other's square
+    return r2 in board.attacks(r1)
+
+
+def _is_bad_bishop(board: chess.Board, sq: int, color: bool) -> int:
+    """Check if bishop is blocked by own pawns. Returns penalty level (0, 1, or 2)."""
+    # Determine bishop square color
+    file_idx = _file_index(sq)
+    rank_idx = _rank_index(sq)
+    is_light_square = (file_idx + rank_idx) % 2 == 1
+    
+    # Count own pawns on same color squares
+    pawns_blocking = 0
+    for pawn_sq in board.pieces(chess.PAWN, color):
+        pf, pr = _file_index(pawn_sq), _rank_index(pawn_sq)
+        pawn_is_light = (pf + pr) % 2 == 1
+        if pawn_is_light == is_light_square:
+            pawns_blocking += 1
+    
+    if pawns_blocking >= 4:
+        return 2  # Severe bad bishop
+    elif pawns_blocking >= 3:
+        return 1  # Moderate bad bishop
+    return 0
+
+
+def _count_bad_bishops(board: chess.Board, color: bool) -> Tuple[int, int]:
+    """Returns (severe_count, moderate_count) of bad bishops."""
+    severe, moderate = 0, 0
+    for sq in board.pieces(chess.BISHOP, color):
+        level = _is_bad_bishop(board, sq, color)
+        if level == 2:
+            severe += 1
+        elif level == 1:
+            moderate += 1
+    return severe, moderate
+
+
+def _is_fianchetto(board: chess.Board, sq: int, color: bool) -> bool:
+    """Check if bishop is fianchettoed (b2/g2 for White, b7/g7 for Black)."""
+    if color == chess.WHITE:
+        return sq in (chess.B2, chess.G2)
+    else:
+        return sq in (chess.B7, chess.G7)
+
+
+def _count_fianchetto(board: chess.Board, color: bool) -> int:
+    """Count fianchettoed bishops."""
+    return sum(1 for sq in board.pieces(chess.BISHOP, color) if _is_fianchetto(board, sq, color))
+
+
+def _is_trapped_piece(board: chess.Board, sq: int, piece_type: int, color: bool) -> bool:
+    """Check if a piece has very limited mobility (potentially trapped)."""
+    attacks = board.attacks(sq)
+    safe_squares = 0
+    enemy = not color
+    
+    for target in attacks:
+        # Check if square is safe (not attacked or defended)
+        if not board.attackers(enemy, target):
+            safe_squares += 1
+        elif board.attackers(color, target):
+            safe_squares += 1
+    
+    # Piece is trapped if it has 0-1 safe squares
+    return safe_squares <= 1
+
+
+def _count_trapped_pieces(board: chess.Board, color: bool) -> int:
+    """Count trapped minor pieces and rooks."""
+    count = 0
+    for pt in (chess.KNIGHT, chess.BISHOP, chess.ROOK):
+        for sq in board.pieces(pt, color):
+            if _is_trapped_piece(board, sq, pt, color):
+                count += 1
+    return count
+
+
+def _is_knight_on_rim(board: chess.Board, sq: int) -> bool:
+    """Check if knight is on rim (a or h file, or rank 1 or 8)."""
+    f, r = _file_index(sq), _rank_index(sq)
+    return f == 0 or f == 7 or r == 0 or r == 7
+
+
+def _count_knights_on_rim(board: chess.Board, color: bool) -> int:
+    """Count knights on rim."""
+    return sum(1 for sq in board.pieces(chess.KNIGHT, color) if _is_knight_on_rim(board, sq))
+
+
+def _is_backward_pawn(board: chess.Board, sq: int, color: bool) -> bool:
+    """Check if pawn is backward (no friendly pawns to support its advance)."""
+    f = _file_index(sq)
+    r = _rank_index(sq)
+    
+    # Check adjacent files for friendly pawns that could support
+    for adj_f in (f - 1, f + 1):
+        if adj_f < 0 or adj_f > 7:
+            continue
+        for pawn_sq in board.pieces(chess.PAWN, color):
+            pf, pr = _file_index(pawn_sq), _rank_index(pawn_sq)
+            if pf == adj_f:
+                # For white, supporting pawns should be on same or lower rank
+                if color == chess.WHITE and pr <= r:
+                    return False
+                elif color == chess.BLACK and pr >= r:
+                    return False
+    return True
+
+
+def _count_backward_pawns(board: chess.Board, color: bool) -> int:
+    """Count backward pawns."""
+    count = 0
+    for sq in board.pieces(chess.PAWN, color):
+        if _is_backward_pawn(board, sq, color):
+            count += 1
+    return count
+
+
+def _count_pawn_chains(board: chess.Board, color: bool) -> int:
+    """Count pawns that are part of chains (protected by other pawns)."""
+    count = 0
+    for sq in board.pieces(chess.PAWN, color):
+        # Check if protected by another pawn
+        defenders = board.attackers(color, sq)
+        if defenders & board.pieces(chess.PAWN, color):
+            count += 1
+    return count
+
+
+def _count_undeveloped_pieces(board: chess.Board, color: bool) -> int:
+    """Count minor pieces still on starting squares."""
+    count = 0
+    if color == chess.WHITE:
+        start_squares = {chess.B1, chess.G1, chess.C1, chess.F1}
+    else:
+        start_squares = {chess.B8, chess.G8, chess.C8, chess.F8}
+    
+    for pt in (chess.KNIGHT, chess.BISHOP):
+        for sq in board.pieces(pt, color):
+            if sq in start_squares:
+                count += 1
+    return count
+
+
+def _is_early_queen_out(board: chess.Board, color: bool, phase: float) -> bool:
+    """Check if queen is out early while minor pieces undeveloped."""
+    if phase < 0.8:  # Not early game
+        return False
+    
+    undeveloped = _count_undeveloped_pieces(board, color)
+    if undeveloped < 2:
+        return False
+    
+    queen_sqs = board.pieces(chess.QUEEN, color)
+    if not queen_sqs:
+        return False
+    
+    queen_sq = list(queen_sqs)[0]
+    start_sq = chess.D1 if color == chess.WHITE else chess.D8
+    
+    return queen_sq != start_sq
+
+
+def _king_centralization(board: chess.Board, color: bool) -> int:
+    """Measure how centralized the king is (for endgame). Higher = more central."""
+    ksq = _king_square(board, color)
+    if ksq is None:
+        return 0
+    f, r = _file_index(ksq), _rank_index(ksq)
+    # Distance from center (3.5, 3.5)
+    center_dist = abs(f - 3.5) + abs(r - 3.5)
+    # Invert so higher = better (max 7, min 0 at center)
+    return int(7 - center_dist)
+
+
+def _count_pawn_storm(board: chess.Board, color: bool) -> int:
+    """Count advanced pawns near enemy king (pawn storm)."""
+    enemy = not color
+    enemy_king_sq = _king_square(board, enemy)
+    if enemy_king_sq is None:
+        return 0
+    
+    ek_file = _file_index(enemy_king_sq)
+    count = 0
+    
+    for sq in board.pieces(chess.PAWN, color):
+        pf, pr = _file_index(sq), _rank_index(sq)
+        # Check if pawn is near enemy king's file
+        if abs(pf - ek_file) <= 1:
+            # For white, advanced means higher rank; for black, lower
+            if color == chess.WHITE and pr >= 4:
+                count += 1
+            elif color == chess.BLACK and pr <= 3:
+                count += 1
+    return count
+
+
+def _king_tropism(board: chess.Board, color: bool) -> int:
+    """Sum of how close attacking pieces are to enemy king."""
+    enemy = not color
+    enemy_king_sq = _king_square(board, enemy)
+    if enemy_king_sq is None:
+        return 0
+    
+    ek_f, ek_r = _file_index(enemy_king_sq), _rank_index(enemy_king_sq)
+    tropism = 0
+    
+    for pt in (chess.KNIGHT, chess.BISHOP, chess.ROOK, chess.QUEEN):
+        for sq in board.pieces(pt, color):
+            pf, pr = _file_index(sq), _rank_index(sq)
+            dist = max(abs(pf - ek_f), abs(pr - ek_r))  # Chebyshev distance
+            tropism += max(0, 7 - dist)  # Closer = higher score
+    
+    return tropism
+
+
 def extract_features(board: chess.Board) -> Dict[str, float]:
     """Extract raw feature counts from a position.
 
@@ -367,6 +639,54 @@ def extract_features(board: chess.Board) -> Dict[str, float]:
     # Uncastled and Tempo
     feats["uncastled"] = float(_uncastled(board))
     feats["tempo"] = float(_tempo(board))
+
+    # =============================
+    # NEW FEATURES
+    # =============================
+    
+    # Tactical features
+    feats["hanging_pieces"] = float(_count_hanging_pieces(board, chess.WHITE) - _count_hanging_pieces(board, chess.BLACK))
+    feats["threats"] = float(_count_threats(board, chess.WHITE) - _count_threats(board, chess.BLACK))
+    
+    # Rook features
+    feats["rooks_on_7th"] = float(_count_rooks_on_7th(board, chess.WHITE) - _count_rooks_on_7th(board, chess.BLACK))
+    feats["connected_rooks"] = float(
+        (1 if _are_rooks_connected(board, chess.WHITE) else 0) - 
+        (1 if _are_rooks_connected(board, chess.BLACK) else 0)
+    )
+    
+    # Bishop features
+    w_severe, w_moderate = _count_bad_bishops(board, chess.WHITE)
+    b_severe, b_moderate = _count_bad_bishops(board, chess.BLACK)
+    feats["bad_bishop_severe"] = float(w_severe - b_severe)
+    feats["bad_bishop_moderate"] = float(w_moderate - b_moderate)
+    feats["fianchetto"] = float(_count_fianchetto(board, chess.WHITE) - _count_fianchetto(board, chess.BLACK))
+    
+    # Piece activity
+    feats["trapped_pieces"] = float(_count_trapped_pieces(board, chess.WHITE) - _count_trapped_pieces(board, chess.BLACK))
+    feats["knights_on_rim"] = float(_count_knights_on_rim(board, chess.WHITE) - _count_knights_on_rim(board, chess.BLACK))
+    
+    # Enhanced pawn features
+    feats["backward_pawns"] = float(_count_backward_pawns(board, chess.WHITE) - _count_backward_pawns(board, chess.BLACK))
+    feats["pawn_chains"] = float(_count_pawn_chains(board, chess.WHITE) - _count_pawn_chains(board, chess.BLACK))
+    
+    # Development (scaled by phase - only relevant in opening)
+    feats["undeveloped_pieces"] = float(
+        (_count_undeveloped_pieces(board, chess.WHITE) - _count_undeveloped_pieces(board, chess.BLACK)) * phase
+    )
+    feats["early_queen_out"] = float(
+        ((1 if _is_early_queen_out(board, chess.WHITE, phase) else 0) - 
+         (1 if _is_early_queen_out(board, chess.BLACK, phase) else 0)) * phase
+    )
+    
+    # King safety extensions
+    feats["pawn_storm"] = float(_count_pawn_storm(board, chess.WHITE) - _count_pawn_storm(board, chess.BLACK))
+    feats["king_tropism"] = float(_king_tropism(board, chess.WHITE) - _king_tropism(board, chess.BLACK))
+    
+    # Endgame features (scaled by eg_phase - only relevant in endgame)
+    feats["king_centralization"] = float(
+        (_king_centralization(board, chess.WHITE) - _king_centralization(board, chess.BLACK)) * eg_phase
+    )
 
     return feats
 
