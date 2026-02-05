@@ -90,6 +90,10 @@ def negamax(board: chess.Board, depth: int, alpha: int, beta: int, ply: int, kil
     # Handle terminal positions immediately to avoid iterating an empty move list
     if board.is_game_over():
         return evaluate_for_side_to_move(board)
+    
+    # Check for repetition - avoid draws when we have advantage
+    if board.is_repetition(2):  # Position occurred twice = one more makes threefold
+        return 0  # Draw score
 
     board_hash = compute_zobrist_hash(board)
     tt_entry = transposition_table.get(board_hash)
@@ -110,11 +114,37 @@ def negamax(board: chess.Board, depth: int, alpha: int, beta: int, ply: int, kil
     best_move = None
     moves = list(board.legal_moves)
     moves = order_moves(board, moves, killer_moves, ply)
+    
+    in_check = board.is_check()
+    move_count = 0
 
     for move in moves:
+        move_count += 1
+        is_capture = board.is_capture(move)
+        
+        # Late Move Reductions (LMR):
+        # Reduce depth for late quiet moves that are unlikely to be best
+        reduction = 0
+        if (move_count > 3 and 
+            depth >= 3 and 
+            not is_capture and 
+            not in_check and
+            not board.gives_check(move)):
+            # Reduce by 1 ply for late quiet moves
+            reduction = 1
+            if move_count > 6:
+                reduction = 2  # Even more reduction for very late moves
+        
         try:
             board.push(move)
-            score = -negamax(board, depth - 1, -beta, -alpha, ply + 1, killer_moves)
+            # Search with reduced depth first
+            if reduction > 0:
+                score = -negamax(board, depth - 1 - reduction, -beta, -alpha, ply + 1, killer_moves)
+                # Re-search at full depth if it looks promising
+                if score > alpha:
+                    score = -negamax(board, depth - 1, -beta, -alpha, ply + 1, killer_moves)
+            else:
+                score = -negamax(board, depth - 1, -beta, -alpha, ply + 1, killer_moves)
         finally:
             board.pop()
         if score > best:
@@ -151,6 +181,15 @@ def negamax(board: chess.Board, depth: int, alpha: int, beta: int, ply: int, kil
 
 
 def search(board: chess.Board, depth: int) -> chess.Move | None:
+    best_move, _, _ = alpha_beta_search(board, depth)
+    return best_move
+
+
+def alpha_beta_search(board: chess.Board, depth: int) -> tuple[chess.Move | None, list[chess.Move], int]:
+    """
+    Main search entry point. Returns (best_move, principal_variation, score).
+    Score is from the perspective of the side to move.
+    """
     # Clear TT at the start of each new top-level search
     transposition_table.clear()
 
@@ -160,7 +199,7 @@ def search(board: chess.Board, depth: int) -> chess.Move | None:
 
     moves = list(board.legal_moves)
     if not moves:
-        return None
+        return None, [], 0
 
     # Initialize killer moves (two killers per ply)
     MAX_PLY = 128
@@ -179,4 +218,56 @@ def search(board: chess.Board, depth: int) -> chess.Move | None:
             best_move = move
         if best_score > alpha:
             alpha = best_score
-    return best_move
+    
+    # Build PV from transposition table
+    pv = []
+    if best_move:
+        pv = [best_move]
+        temp_board = board.copy()
+        temp_board.push(best_move)
+        for _ in range(depth - 1):
+            tt_hash = compute_zobrist_hash(temp_board)
+            tt_entry = transposition_table.get(tt_hash)
+            if tt_entry and tt_entry.get('best_move'):
+                pv.append(tt_entry['best_move'])
+                temp_board.push(tt_entry['best_move'])
+            else:
+                break
+    
+    return best_move, pv, best_score
+
+
+import time
+
+def iterative_deepening_search(board: chess.Board, time_limit_seconds: float) -> tuple[int, chess.Move | None, list[chess.Move], int]:
+    """
+    Iterative deepening search with time limit.
+    Returns (score, best_move, pv, depth_reached).
+    """
+    start_time = time.time()
+    best_move = None
+    best_score = 0
+    best_pv = []
+    depth_reached = 0
+    
+    MAX_DEPTH = 20
+    
+    for depth in range(1, MAX_DEPTH + 1):
+        elapsed = time.time() - start_time
+        if elapsed >= time_limit_seconds * 0.8:
+            break
+        
+        move, pv, score = alpha_beta_search(board, depth)
+        
+        elapsed = time.time() - start_time
+        if elapsed < time_limit_seconds * 0.95:
+            if move:
+                best_move = move
+                best_score = score
+                best_pv = pv
+                depth_reached = depth
+        
+        if elapsed >= time_limit_seconds * 0.95:
+            break
+    
+    return best_score, best_move, best_pv, depth_reached
